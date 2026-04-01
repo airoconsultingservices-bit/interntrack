@@ -1,0 +1,348 @@
+// InternTrack SaaS - Supabase PostgreSQL Schema (Free Tier)
+// Provider: Supabase (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── TENANTS ────────────────────────────────────────────
+model Tenant {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String   @unique
+  plan        Plan     @default(FREE)
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?
+  maxUsers             Int      @default(50)
+  maxAppsPerMonth      Int      @default(100)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+
+  @@index([slug])
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+// ─── USERS ──────────────────────────────────────────────
+model User {
+  id            String   @id @default(uuid()) @db.Uuid
+  email         String   @unique
+  passwordHash  String?
+  name          String
+  avatarUrl     String?
+  role          UserRole @default(STUDENT)
+  isActive      Boolean  @default(true)
+  emailVerified Boolean  @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenantId      String   @db.Uuid
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  profile       StudentProfile?
+  applications  Application[]
+  resumes       Resume[]
+  emailSyncs    EmailSync[]
+  activityLogs  ActivityLog[]
+
+  @@index([email])
+  @@index([tenantId])
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+  SUPER_ADMIN
+}
+
+// ─── STUDENT PROFILES ───────────────────────────────────
+model StudentProfile {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @unique @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  phone          String?
+  state          String?
+  university     String?
+  major          String?
+  gpa            Float?
+  graduationYear Int?
+  linkedinUrl    String?
+  portfolioUrl   String?
+  bio            String?
+  skills         String[]
+  targetIndustries String[]
+  targetRoles    String[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ─── RESUMES ────────────────────────────────────────────
+model Resume {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @db.Uuid
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fileName       String
+  storagePath    String
+  fileSize       Int
+  mimeType       String
+  isActive       Boolean     @default(true)
+  extractedSkills     String[]
+  extractedIndustries String[]
+  parseStatus    ParseStatus @default(PENDING)
+  parsedAt       DateTime?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum ParseStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ─── COMPANIES ──────────────────────────────────────────
+model Company {
+  id           String       @id @default(uuid()) @db.Uuid
+  name         String
+  logo         String?
+  industry     String
+  field        String?
+  website      String?
+  careersUrl   String?
+  headquarters String?
+  size         CompanySize?
+  isVerified   Boolean      @default(false)
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  internships  Internship[]
+
+  @@index([name])
+  @@index([industry])
+}
+
+enum CompanySize {
+  STARTUP
+  SMALL
+  MEDIUM
+  LARGE
+  ENTERPRISE
+}
+
+// ─── INTERNSHIPS ────────────────────────────────────────
+model Internship {
+  id             String     @id @default(uuid()) @db.Uuid
+  companyId      String     @db.Uuid
+  company        Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  title          String
+  description    String?
+  location       String?
+  isRemote       Boolean    @default(false)
+  skills         String[]
+  requirements   String[]
+  applicationUrl String?
+  portalType     PortalType @default(DIRECT)
+  deadline       DateTime?
+  compensation   String?
+  isActive       Boolean    @default(true)
+  source         String?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  applications   Application[]
+
+  @@index([companyId])
+  @@index([isActive, deadline])
+}
+
+enum PortalType {
+  DIRECT
+  LINKEDIN
+  HANDSHAKE
+  INDEED
+  OTHER
+}
+
+// ─── APPLICATIONS ───────────────────────────────────────
+model Application {
+  id             String            @id @default(uuid()) @db.Uuid
+  userId         String            @db.Uuid
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  internshipId   String            @db.Uuid
+  internship     Internship        @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+
+  status         ApplicationStatus @default(APPLIED)
+  portal         PortalType        @default(DIRECT)
+  appliedAt      DateTime          @default(now())
+  notes          String?
+
+  statusHistory  StatusHistory[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, internshipId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum ApplicationStatus {
+  APPLIED
+  UNDER_REVIEW
+  INTERVIEW_SCHEDULED
+  INTERVIEWED
+  OFFER_RECEIVED
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model StatusHistory {
+  id            String            @id @default(uuid()) @db.Uuid
+  applicationId String            @db.Uuid
+  application   Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  changedAt     DateTime          @default(now())
+
+  @@index([applicationId])
+}
+
+// ─── EMAIL SYNC ─────────────────────────────────────────
+model EmailSync {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String   @default("gmail")
+  isConnected  Boolean  @default(false)
+  lastSyncAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  emails       SyncedEmail[]
+
+  @@unique([userId, provider])
+}
+
+model SyncedEmail {
+  id           String         @id @default(uuid()) @db.Uuid
+  emailSyncId  String         @db.Uuid
+  emailSync    EmailSync      @relation(fields: [emailSyncId], references: [id], onDelete: Cascade)
+  messageId    String
+  fromAddr     String
+  subject      String
+  snippet      String?
+  receivedAt   DateTime
+  companyMatch String?
+  sentiment    EmailSentiment?
+
+  createdAt    DateTime @default(now())
+
+  @@unique([emailSyncId, messageId])
+  @@index([emailSyncId])
+}
+
+enum EmailSentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+// ─── SUBSCRIPTIONS ──────────────────────────────────────
+model Subscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  tenantId             String             @unique @db.Uuid
+  stripeSubscriptionId String             @unique
+  stripePriceId        String
+  status               SubscriptionStatus
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean            @default(false)
+  canceledAt           DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  payments             Payment[]
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+}
+
+model Payment {
+  id              String       @id @default(uuid()) @db.Uuid
+  subscriptionId  String       @db.Uuid
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  stripePaymentId String       @unique
+  amount          Int
+  currency        String       @default("usd")
+  status          String
+  paidAt          DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([subscriptionId])
+}
+
+// ─── INGESTION ──────────────────────────────────────────
+model IngestionJob {
+  id            String          @id @default(uuid()) @db.Uuid
+  source        String
+  status        IngestionStatus @default(PENDING)
+  recordsFound  Int             @default(0)
+  recordsAdded  Int             @default(0)
+  errorMessage  String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  triggeredBy   String?
+  createdAt     DateTime        @default(now())
+}
+
+enum IngestionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// ─── ACTIVITY LOG ───────────────────────────────────────
+model ActivityLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
