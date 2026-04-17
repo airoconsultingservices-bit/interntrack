@@ -103,7 +103,7 @@ router.post("/register", async (req: Request, res: Response) => {
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn as string | number }
+      { expiresIn: config.jwt.expiresIn as any }
     );
 
     logger.info(`New user registered: ${email} (${firstName} ${lastName})`);
@@ -337,7 +337,7 @@ router.post("/login", async (req: Request, res: Response) => {
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       config.jwt.secret,
-      { expiresIn: config.jwt.expiresIn as string | number }
+      { expiresIn: config.jwt.expiresIn as any }
     );
 
     const fullName = [user.firstName, user.middleName, user.lastName].filter(Boolean).join(" ");
