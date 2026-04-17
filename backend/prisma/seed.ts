@@ -16,7 +16,7 @@ async function main() {
   await prisma.user.upsert({
     where: { email: "admin@interntrack.com" },
     update: {},
-    create: { email: "admin@interntrack.com", passwordHash: adminHash, name: "System Admin", role: "SUPER_ADMIN", emailVerified: true, tenantId: tenant.id },
+    create: { email: "admin@interntrack.com", passwordHash: adminHash, firstName: "System", lastName: "Admin", role: "SUPER_ADMIN", emailVerified: true, tenantId: tenant.id },
   });
 
   const studentHash = await bcrypt.hash("student123", 12);
@@ -24,7 +24,7 @@ async function main() {
     where: { email: "jordan@stanford.edu" },
     update: {},
     create: {
-      email: "jordan@stanford.edu", passwordHash: studentHash, name: "Jordan Rivera", role: "STUDENT", emailVerified: true, tenantId: tenant.id,
+      email: "jordan@stanford.edu", passwordHash: studentHash, firstName: "Jordan", lastName: "Rivera", role: "STUDENT", emailVerified: true, phoneVerified: true, phone: "+1 555-123-4567", tenantId: tenant.id,
       profile: { create: { phone: "+1 555-123-4567", state: "California", university: "Stanford University", major: "Computer Science", gpa: 3.85, graduationYear: 2027, skills: ["Python", "JavaScript", "React", "SQL", "ML"], targetIndustries: ["Technology", "Finance"], targetRoles: ["SWE Intern", "Data Science Intern"] } },
     },
   });

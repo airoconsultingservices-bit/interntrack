@@ -208,7 +208,13 @@ export default function App() {
   /* Registration state */
   const [registered, setRegistered] = useState(false);
   const [regStep, setRegStep] = useState(1);
-  const [regForm, setRegForm] = useState({ name: "", email: "", password: "", confirmPass: "", state: "", university: "" });
+  const [regForm, setRegForm] = useState({ firstName: "", middleName: "", lastName: "", email: "", password: "", confirmPass: "", state: "", university: "", phone: "" });
+  const [phoneOtpSent, setPhoneOtpSent] = useState(false);
+  const [phoneOtp, setPhoneOtp] = useState("");
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [emailVerifSent, setEmailVerifSent] = useState(false);
+  const [apiError, setApiError] = useState("");
   const [selectedPlan, setSelectedPlan] = useState("free");
   const [payMethod, setPayMethod] = useState("card");
   const [cardForm, setCardForm] = useState({ number: "", name: "", expiry: "", cvv: "" });
@@ -247,16 +253,104 @@ export default function App() {
   const notify = (m) => { setToast(m); setTimeout(() => setToast(""), 2800); };
 
   /* Registration helpers */
+  const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080/api";
+
   const validateStep1 = () => {
     const err = {};
-    if (!regForm.name.trim()) err.name = "Name is required";
+    if (!regForm.firstName.trim()) err.firstName = "First name is required";
+    if (!regForm.lastName.trim()) err.lastName = "Last name is required";
     if (!regForm.email.trim() || !regForm.email.includes("@")) err.email = "Valid email required";
     if (regForm.password.length < 6) err.password = "Min 6 characters";
     if (regForm.password !== regForm.confirmPass) err.confirmPass = "Passwords must match";
     if (!regForm.university.trim()) err.university = "University required";
     if (!regForm.state.trim()) err.state = "State required";
+    if (regForm.phone && !/^\+?[\d\s\-()]{7,}$/.test(regForm.phone.trim())) err.phone = "Valid phone number required";
     setRegErrors(err);
     return Object.keys(err).length === 0;
+  };
+
+  const handleSendOtp = async () => {
+    if (!regForm.phone.trim()) { setRegErrors((p) => ({ ...p, phone: "Phone number required for verification" })); return; }
+    setOtpLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/auth/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: regForm.phone, email: regForm.email }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setPhoneOtpSent(true);
+        // In dev mode, auto-fill the OTP for convenience
+        if (data._devOtp) setPhoneOtp(data._devOtp);
+        notify("OTP sent to " + regForm.phone);
+      } else {
+        setRegErrors((p) => ({ ...p, phone: data.error || "Failed to send OTP" }));
+      }
+    } catch {
+      setRegErrors((p) => ({ ...p, phone: "Network error. Is the backend running?" }));
+    }
+    setOtpLoading(false);
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!phoneOtp.trim()) return;
+    setOtpLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: regForm.email, otp: phoneOtp }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setPhoneVerified(true);
+        notify("Phone verified!");
+      } else {
+        setRegErrors((p) => ({ ...p, otp: data.error || "Invalid OTP" }));
+      }
+    } catch {
+      setRegErrors((p) => ({ ...p, otp: "Network error" }));
+    }
+    setOtpLoading(false);
+  };
+
+  const handleRegister = async () => {
+    if (!validateStep1()) return;
+    setProcessing(true);
+    setApiError("");
+    try {
+      const resp = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: regForm.firstName,
+          middleName: regForm.middleName || null,
+          lastName: regForm.lastName,
+          email: regForm.email,
+          password: regForm.password,
+          phone: regForm.phone || null,
+          state: regForm.state,
+          university: regForm.university,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        // Store token for authenticated requests
+        if (data.token) localStorage.setItem("interntrack_token", data.token);
+        setEmailVerifSent(true);
+        setRegStep(2); // Proceed to plan selection
+        notify("Account created! Check your email for verification.");
+      } else {
+        setApiError(data.error || "Registration failed");
+        if (data.details) setRegErrors(data.details);
+      }
+    } catch {
+      // If backend is not running, allow proceeding in demo mode
+      setRegStep(2);
+      notify("Account created (demo mode)");
+    }
+    setProcessing(false);
   };
 
   const formatCardNumber = (v) => {
@@ -279,43 +373,80 @@ export default function App() {
   };
 
   const finishRegistration = () => {
-    setProfile((p) => ({ ...p, name: regForm.name, email: regForm.email, university: regForm.university }));
+    const fullName = [regForm.firstName, regForm.middleName, regForm.lastName].filter(Boolean).join(" ");
+    setProfile((p) => ({ ...p, name: fullName, email: regForm.email, university: regForm.university, phone: regForm.phone }));
     setRegistered(true);
-    notify("Welcome to InternTrack, " + regForm.name.split(" ")[0] + "!");
+    notify("Welcome to InternTrack, " + regForm.firstName + "!");
   };
 
   const ADMIN_CREDS = { email: "admin@interntrack.com", password: "admin123" };
   const DEMO_STUDENT = { email: "jordan@stanford.edu", password: "student123", name: "Jordan Rivera", uni: "Stanford" };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setLoginError("");
     setLoginLoading(true);
-    setTimeout(() => {
-      setLoginLoading(false);
-      if (loginEmail === ADMIN_CREDS.email && loginPass === ADMIN_CREDS.password) {
-        setProfile((p) => ({ ...p, name: "Admin", email: ADMIN_CREDS.email, university: "InternTrack HQ" }));
-        setRegForm((p) => ({ ...p, name: "Admin" }));
-        setSelectedPlan("enterprise");
-        setView("admin");
+    try {
+      // Try backend API first
+      const resp = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPass }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        if (data.token) localStorage.setItem("interntrack_token", data.token);
+        const fullName = data.user.fullName || [data.user.firstName, data.user.middleName, data.user.lastName].filter(Boolean).join(" ");
+        setProfile((p) => ({
+          ...p,
+          name: fullName,
+          email: data.user.email,
+          phone: data.user.phone || "",
+          university: data.user.profile?.university || "",
+        }));
+        setRegForm((p) => ({ ...p, firstName: data.user.firstName, lastName: data.user.lastName }));
+        if (data.user.role === "SUPER_ADMIN" || data.user.role === "ADMIN") {
+          setSelectedPlan(data.user.plan?.toLowerCase() || "enterprise");
+          setView("admin");
+        } else {
+          setSelectedPlan(data.user.plan?.toLowerCase() || "free");
+          setView("student");
+        }
         setRegistered(true);
-        notify("Welcome back, Admin!");
-      } else if (loginEmail === DEMO_STUDENT.email && loginPass === DEMO_STUDENT.password) {
-        setProfile((p) => ({ ...p, name: DEMO_STUDENT.name, email: DEMO_STUDENT.email, university: DEMO_STUDENT.uni }));
-        setRegForm((p) => ({ ...p, name: DEMO_STUDENT.name }));
-        setSelectedPlan("pro");
-        setView("student");
-        setRegistered(true);
-        notify("Welcome back, Jordan!");
-      } else {
-        setLoginError("Invalid email or password. Try the admin or demo credentials below.");
+        setLoginLoading(false);
+        notify("Welcome back, " + data.user.firstName + "!");
+        return;
       }
-    }, 1000);
+    } catch {
+      // Backend not available, fall back to demo credentials
+    }
+
+    // Fallback: demo credentials (when backend is not running)
+    if (loginEmail === ADMIN_CREDS.email && loginPass === ADMIN_CREDS.password) {
+      setProfile((p) => ({ ...p, name: "System Admin", email: ADMIN_CREDS.email, university: "InternTrack HQ" }));
+      setRegForm((p) => ({ ...p, firstName: "System", lastName: "Admin" }));
+      setSelectedPlan("enterprise");
+      setView("admin");
+      setRegistered(true);
+      notify("Welcome back, Admin!");
+    } else if (loginEmail === DEMO_STUDENT.email && loginPass === DEMO_STUDENT.password) {
+      setProfile((p) => ({ ...p, name: DEMO_STUDENT.name, email: DEMO_STUDENT.email, university: DEMO_STUDENT.uni }));
+      setRegForm((p) => ({ ...p, firstName: "Jordan", lastName: "Rivera" }));
+      setSelectedPlan("pro");
+      setView("student");
+      setRegistered(true);
+      notify("Welcome back, Jordan!");
+    } else {
+      setLoginError("Invalid email or password. Try the admin or demo credentials below.");
+    }
+    setLoginLoading(false);
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("interntrack_token");
     setRegistered(false);
     setShowLogin(true);
     setRegStep(1);
+    setRegForm({ firstName: "", middleName: "", lastName: "", email: "", password: "", confirmPass: "", state: "", university: "", phone: "" });
     setLoginEmail("");
     setLoginPass("");
     setLoginError("");
@@ -325,6 +456,11 @@ export default function App() {
     setSaved(false);
     setGmailOk(false);
     setEmails([]);
+    setPhoneOtpSent(false);
+    setPhoneOtp("");
+    setPhoneVerified(false);
+    setEmailVerifSent(false);
+    setApiError("");
     notify("Logged out successfully");
   };
 
@@ -333,7 +469,7 @@ export default function App() {
     setApplyingId(c.id);
     setTimeout(() => {
       setApplied((p) => new Set([...p, c.id]));
-      setApps((p) => [{ id: Date.now(), company: c.name, role: c.roles[0], date: "Mar 30", status: "Applied", portal, color: c.color, logo: c.logo, user: regForm.name || "Student" }, ...p]);
+      setApps((p) => [{ id: Date.now(), company: c.name, role: c.roles[0], date: "Mar 30", status: "Applied", portal, color: c.color, logo: c.logo, user: [regForm.firstName, regForm.lastName].filter(Boolean).join(" ") || "Student" }, ...p]);
       setApplyingId(null);
       notify("Applied to " + c.name + " via " + portal);
     }, 1100);
@@ -537,20 +673,103 @@ export default function App() {
             <div>
               <h2 style={{ fontSize: 22, fontWeight: 800, color: "#1a1a2e", marginBottom: 4 }}>Create Your Account</h2>
               <p style={{ color: "#888", fontSize: 13, marginBottom: 24 }}>Start tracking internships in minutes.</p>
+
+              {apiError && (
+                <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", fontSize: 12, fontWeight: 500, marginBottom: 16 }}>
+                  {apiError}
+                </div>
+              )}
+
               <div style={{ display: "grid", gap: 14 }}>
-                <div>
-                  <Lbl>Full Name</Lbl>
-                  <input className="inp" value={regForm.name} onChange={(e) => setRegForm((p) => ({ ...p, name: e.target.value }))} placeholder="Jordan Rivera" style={{ borderColor: regErrors.name ? "#DC2626" : undefined }} />
-                  <ErrMsg field="name" />
+                {/* Name Fields - First, Middle (optional), Last */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 0.8fr 1fr", gap: 12 }}>
+                  <div>
+                    <Lbl>First Name *</Lbl>
+                    <input className="inp" value={regForm.firstName} onChange={(e) => setRegForm((p) => ({ ...p, firstName: e.target.value }))} placeholder="Jordan" style={{ borderColor: regErrors.firstName ? "#DC2626" : undefined }} />
+                    <ErrMsg field="firstName" />
+                  </div>
+                  <div>
+                    <Lbl>Middle Name</Lbl>
+                    <input className="inp" value={regForm.middleName} onChange={(e) => setRegForm((p) => ({ ...p, middleName: e.target.value }))} placeholder="A." style={{ borderColor: regErrors.middleName ? "#DC2626" : undefined }} />
+                    <ErrMsg field="middleName" />
+                  </div>
+                  <div>
+                    <Lbl>Last Name *</Lbl>
+                    <input className="inp" value={regForm.lastName} onChange={(e) => setRegForm((p) => ({ ...p, lastName: e.target.value }))} placeholder="Rivera" style={{ borderColor: regErrors.lastName ? "#DC2626" : undefined }} />
+                    <ErrMsg field="lastName" />
+                  </div>
                 </div>
                 <div>
-                  <Lbl>Email Address</Lbl>
+                  <Lbl>Email Address *</Lbl>
                   <input className="inp" type="email" value={regForm.email} onChange={(e) => setRegForm((p) => ({ ...p, email: e.target.value }))} placeholder="jordan@university.edu" style={{ borderColor: regErrors.email ? "#DC2626" : undefined }} />
                   <ErrMsg field="email" />
                 </div>
+
+                {/* Phone Number with MFA Verification */}
+                <div>
+                  <Lbl>Phone Number (for MFA verification)</Lbl>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      className="inp"
+                      type="tel"
+                      value={regForm.phone}
+                      onChange={(e) => { setRegForm((p) => ({ ...p, phone: e.target.value })); setPhoneVerified(false); setPhoneOtpSent(false); }}
+                      placeholder="+1 555-123-4567"
+                      style={{ flex: 1, borderColor: regErrors.phone ? "#DC2626" : phoneVerified ? "#059669" : undefined }}
+                      disabled={phoneVerified}
+                    />
+                    {!phoneVerified && !phoneOtpSent && (
+                      <button
+                        className="btn"
+                        onClick={handleSendOtp}
+                        disabled={otpLoading || !regForm.phone.trim() || !regForm.email.trim()}
+                        style={{ padding: "10px 16px", background: "#1a1a2e", color: "#e8c547", fontSize: 12, whiteSpace: "nowrap" }}
+                      >
+                        {otpLoading ? "Sending..." : "Send OTP"}
+                      </button>
+                    )}
+                    {phoneVerified && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 12px", background: "#ECFDF5", borderRadius: 10, border: "1px solid #059669", color: "#059669", fontSize: 12, fontWeight: 600 }}>
+                        <span style={{ fontSize: 16 }}>✓</span> Verified
+                      </div>
+                    )}
+                  </div>
+                  <ErrMsg field="phone" />
+
+                  {/* OTP Input */}
+                  {phoneOtpSent && !phoneVerified && (
+                    <div style={{ marginTop: 10, padding: 14, background: "#fafaf7", borderRadius: 10, border: "1px solid #e5e3dc" }}>
+                      <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>Enter the 6-digit code sent to your phone:</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          className="inp"
+                          value={phoneOtp}
+                          onChange={(e) => setPhoneOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          placeholder="123456"
+                          maxLength={6}
+                          style={{ flex: 1, letterSpacing: "0.3em", textAlign: "center", fontWeight: 700, fontSize: 18, borderColor: regErrors.otp ? "#DC2626" : undefined }}
+                        />
+                        <button
+                          className="btn"
+                          onClick={handleVerifyOtp}
+                          disabled={otpLoading || phoneOtp.length !== 6}
+                          style={{ padding: "10px 16px", background: "#059669", color: "#fff", fontSize: 12 }}
+                        >
+                          {otpLoading ? "Verifying..." : "Verify"}
+                        </button>
+                      </div>
+                      <ErrMsg field="otp" />
+                      <div style={{ fontSize: 11, color: "#aaa", marginTop: 6, display: "flex", justifyContent: "space-between" }}>
+                        <span>Code expires in 10 minutes</span>
+                        <span style={{ color: "#1a1a2e", cursor: "pointer", fontWeight: 600 }} onClick={handleSendOtp}>Resend OTP</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <div>
-                    <Lbl>State</Lbl>
+                    <Lbl>State *</Lbl>
                     <select
                       className="inp"
                       value={regForm.state}
@@ -565,7 +784,7 @@ export default function App() {
                     <ErrMsg field="state" />
                   </div>
                   <div>
-                    <Lbl>University</Lbl>
+                    <Lbl>University *</Lbl>
                     <select
                       className="inp"
                       value={regForm.university}
@@ -594,19 +813,32 @@ export default function App() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <div>
-                    <Lbl>Password</Lbl>
+                    <Lbl>Password *</Lbl>
                     <input className="inp" type="password" value={regForm.password} onChange={(e) => setRegForm((p) => ({ ...p, password: e.target.value }))} placeholder="Min 6 characters" style={{ borderColor: regErrors.password ? "#DC2626" : undefined }} />
                     <ErrMsg field="password" />
                   </div>
                   <div>
-                    <Lbl>Confirm Password</Lbl>
+                    <Lbl>Confirm Password *</Lbl>
                     <input className="inp" type="password" value={regForm.confirmPass} onChange={(e) => setRegForm((p) => ({ ...p, confirmPass: e.target.value }))} placeholder="Confirm password" style={{ borderColor: regErrors.confirmPass ? "#DC2626" : undefined }} />
                     <ErrMsg field="confirmPass" />
                   </div>
                 </div>
               </div>
-              <button className="btn" onClick={() => { if (validateStep1()) setRegStep(2); }} style={{ width: "100%", marginTop: 24, padding: "14px", background: "#1a1a2e", color: "#e8c547", fontSize: 15 }}>
-                Continue to Plans
+
+              {/* Email verification notice */}
+              {emailVerifSent && (
+                <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1D4ED8", fontSize: 12, fontWeight: 500 }}>
+                  📧 Verification email sent! Please check your inbox to confirm your email address.
+                </div>
+              )}
+
+              <button className="btn" disabled={processing} onClick={handleRegister} style={{ width: "100%", marginTop: 24, padding: "14px", background: processing ? "#ccc" : "#1a1a2e", color: "#e8c547", fontSize: 15 }}>
+                {processing ? (
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <span style={{ width: 16, height: 16, border: "2px solid rgba(232,197,71,0.3)", borderTopColor: "#e8c547", borderRadius: "50%", display: "inline-block", animation: "spin 0.8s linear infinite" }} />
+                    Creating Account...
+                  </span>
+                ) : "Create Account & Continue to Plans"}
               </button>
               <div style={{ textAlign: "center", marginTop: 14, fontSize: 13, color: "#888" }}>
                 Already have an account? <span style={{ color: "#1a1a2e", fontWeight: 600, cursor: "pointer" }} onClick={() => setShowLogin(true)}>Sign in</span>
@@ -822,7 +1054,7 @@ export default function App() {
               </div>
               <h2 style={{ fontSize: 24, fontWeight: 800, color: "#1a1a2e", marginBottom: 6 }}>You are all set!</h2>
               <p style={{ color: "#888", fontSize: 14, marginBottom: 8 }}>
-                Welcome to InternTrack, {regForm.name.split(" ")[0]}!
+                Welcome to InternTrack, {regForm.firstName}!
               </p>
               <div style={{ display: "inline-block", padding: "8px 20px", borderRadius: 10, background: chosenPlan.bg, border: "1px solid " + chosenPlan.border, marginBottom: 20 }}>
                 <span style={{ fontWeight: 700, color: chosenPlan.color, fontSize: 15 }}>{chosenPlan.name} Plan</span>
