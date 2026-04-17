@@ -252,8 +252,10 @@ export default function App() {
 
   const notify = (m) => { setToast(m); setTimeout(() => setToast(""), 2800); };
 
-  /* Registration helpers */
-  const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080/api";
+  /* Registration helpers – always use relative /api in production */
+  const API_BASE = (typeof window !== "undefined" && window.location.hostname !== "localhost")
+    ? "/api"
+    : (import.meta.env.VITE_API_URL || "/api");
 
   const validateStep1 = () => {
     const err = {};
