@@ -482,14 +482,46 @@ export default function App() {
     setTimeout(() => { setEmails(MOCK_EMAILS); setGmailOk(true); setGmailLoading(false); notify("Gmail connected via MCP!"); }, 1800);
   };
 
-  const onResume = (e) => {
+  const onResume = async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     setResumeFile(f);
+    setParsed(false);
+
+    // Try uploading to backend API
+    const token = localStorage.getItem("interntrack_token");
+    if (token) {
+      try {
+        const formData = new FormData();
+        formData.append("resume", f);
+        const resp = await fetch(`${API_BASE}/resumes/upload`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          setParsed(true);
+          setProfile((p) => ({
+            ...p,
+            skills: p.skills || (data.extractedSkills || []).join(", "),
+            industries: p.industries || (data.extractedIndustries || []).join(", "),
+          }));
+          notify("Resume uploaded & parsed!");
+          return;
+        }
+        const errData = await resp.json().catch(() => ({}));
+        console.warn("Resume upload API error:", errData.error || resp.status);
+      } catch (err) {
+        console.warn("Resume upload network error, falling back to demo:", err.message);
+      }
+    }
+
+    // Fallback: demo mode (no backend or not logged in)
     setTimeout(() => {
       setParsed(true);
       setProfile((p) => ({ ...p, skills: p.skills || "Python, JavaScript, React, SQL, ML, Data Analysis", industries: p.industries || "Technology, Finance, Consulting" }));
-      notify("Resume parsed!");
+      notify("Resume parsed! (demo mode)");
     }, 1400);
   };
 
