@@ -6,7 +6,7 @@ export const config = {
   isProduction: process.env.NODE_ENV === "production",
   port: parseInt(process.env.PORT || "8080", 10),
 
-  corsOrigins: (process.env.CORS_ORIGINS || "http://localhost:5173")
+  corsOrigins: (process.env.CORS_ORIGINS || "http://localhost:5173,https://interntrack-nu.vercel.app")
     .split(",").map((s) => s.trim()),
 
   jwt: {

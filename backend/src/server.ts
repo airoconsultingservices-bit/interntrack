@@ -45,9 +45,12 @@ app.use("/api/admin", authMiddleware, adminRoutes);
 
 app.use(errorHandler);
 
-const PORT = config.port;
-app.listen(PORT, "0.0.0.0", () => {
-  logger.info(`InternTrack API running on port ${PORT} [${config.nodeEnv}]`);
-});
+// Only start listening when run directly (not when imported by Vercel serverless)
+if (process.env.VERCEL !== "1") {
+  const PORT = config.port;
+  app.listen(PORT, "0.0.0.0", () => {
+    logger.info(`InternTrack API running on port ${PORT} [${config.nodeEnv}]`);
+  });
+}
 
 export default app;
