@@ -1,4 +1,6 @@
 import { Router, Request, Response } from "express";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../config/logger";
 
@@ -111,6 +113,50 @@ router.patch("/users/:id/status", async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     logger.error("Admin user status update error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/admin/users/:id/reset-password
+ * Admin resets a user's password.
+ * Body: { password?: string }
+ * If no password provided, generates a random one and returns it.
+ */
+router.patch("/users/:id/reset-password", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const adminId = (req as any).user?.id;
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Use provided password or generate a random one
+    let newPassword = req.body.password;
+    const wasGenerated = !newPassword;
+    if (!newPassword) {
+      newPassword = crypto.randomBytes(6).toString("base64url"); // ~8 char random password
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+    });
+
+    logger.info(`Password reset for user ${user.email} by admin ${adminId}`);
+
+    return res.json({
+      message: `Password reset for ${user.firstName} ${user.lastName}`,
+      ...(wasGenerated && { generatedPassword: newPassword }),
+    });
+  } catch (err: any) {
+    logger.error("Admin password reset error:", err);
     return res.status(500).json({ error: err.message });
   }
 });

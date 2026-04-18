@@ -250,6 +250,10 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [userSearch, setUserSearch] = useState("");
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [resetPwValue, setResetPwValue] = useState("");
+  const [resetPwResult, setResetPwResult] = useState(null);
+  const [resetPwLoading, setResetPwLoading] = useState(false);
   const [ingLog, setIngLog] = useState([]);
   const [ingesting, setIngesting] = useState(false);
   const fileRef = useRef(null);
@@ -678,6 +682,46 @@ export default function App() {
     } catch (err) {
       notify("Network error: " + err.message);
     }
+  };
+
+  /* Admin: Reset a user's password */
+  const resetUserPassword = async () => {
+    if (!resetPwUser) return;
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    setResetPwLoading(true);
+    setResetPwResult(null);
+    try {
+      const body = resetPwValue.trim() ? { password: resetPwValue.trim() } : {};
+      const resp = await fetch(`${API_BASE}/admin/users/${resetPwUser.id}/reset-password`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setResetPwResult({ success: true, message: data.message, generatedPassword: data.generatedPassword });
+        notify(data.message);
+      } else {
+        setResetPwResult({ success: false, message: data.error || "Reset failed" });
+      }
+    } catch (err) {
+      setResetPwResult({ success: false, message: "Network error: " + err.message });
+    } finally {
+      setResetPwLoading(false);
+    }
+  };
+
+  const openResetPwModal = (user) => {
+    setResetPwUser(user);
+    setResetPwValue("");
+    setResetPwResult(null);
+  };
+
+  const closeResetPwModal = () => {
+    setResetPwUser(null);
+    setResetPwValue("");
+    setResetPwResult(null);
   };
 
   /* Load admin users when Users tab is selected */
@@ -1522,8 +1566,69 @@ export default function App() {
             {usersLoading && <div style={{ textAlign: "center", color: "#888", padding: 20 }}>Loading users...</div>}
             <div className="card" style={{ padding: 0, overflow: "auto" }}>
               <table className="tbl"><thead><tr><th>User</th><th>Uni</th><th>Plan</th><th>Apps</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead>
-                <tbody>{filteredUsers.map((u) => <tr key={u.id}><td><div style={{ fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: 11, color: "#999" }}>{u.email}</div>{u.phone && <div style={{ fontSize: 10, color: "#aaa" }}>{u.phone}</div>}</td><td>{u.uni}</td><td><PlanBadge plan={u.plan} /></td><td style={{ fontWeight: 600 }}>{u.apps}</td><td style={{ fontSize: 11, color: "#888" }}>{u.joined ? new Date(u.joined).toLocaleDateString() : "-"}</td><td><UserStatusBadge status={u.status} /></td><td><div style={{ display: "flex", gap: 4 }}>{u.status === "Suspended" ? <button className="btn" onClick={() => toggleUserStatus(u.id, u.status)} style={{ padding: "4px 10px", background: "#059669", color: "#fff", fontSize: 11 }}>Activate</button> : <button className="btn" onClick={() => toggleUserStatus(u.id, u.status)} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#B91C1C", fontSize: 11 }}>Suspend</button>}<button className="btn" onClick={() => removeUser(u.id, u.name)} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#DC2626", fontSize: 11 }}>Remove</button></div></td></tr>)}</tbody></table>
+                <tbody>{filteredUsers.map((u) => <tr key={u.id}><td><div style={{ fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: 11, color: "#999" }}>{u.email}</div>{u.phone && <div style={{ fontSize: 10, color: "#aaa" }}>{u.phone}</div>}</td><td>{u.uni}</td><td><PlanBadge plan={u.plan} /></td><td style={{ fontWeight: 600 }}>{u.apps}</td><td style={{ fontSize: 11, color: "#888" }}>{u.joined ? new Date(u.joined).toLocaleDateString() : "-"}</td><td><UserStatusBadge status={u.status} /></td><td><div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{u.status === "Suspended" ? <button className="btn" onClick={() => toggleUserStatus(u.id, u.status)} style={{ padding: "4px 10px", background: "#059669", color: "#fff", fontSize: 11 }}>Activate</button> : <button className="btn" onClick={() => toggleUserStatus(u.id, u.status)} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#B91C1C", fontSize: 11 }}>Suspend</button>}<button className="btn" onClick={() => openResetPwModal(u)} style={{ padding: "4px 10px", background: "#EFF6FF", color: "#1D4ED8", fontSize: 11 }}>Reset Pwd</button><button className="btn" onClick={() => removeUser(u.id, u.name)} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#DC2626", fontSize: 11 }}>Remove</button></div></td></tr>)}</tbody></table>
             </div>
+
+            {/* Reset Password Modal */}
+            {resetPwUser && (
+              <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={closeResetPwModal}>
+                <div className="card" style={{ maxWidth: 420, width: "90%", padding: 28 }} onClick={(e) => e.stopPropagation()}>
+                  <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 4, color: "#1a1a2e" }}>Reset Password</h2>
+                  <p style={{ fontSize: 13, color: "#888", marginBottom: 16 }}>
+                    Reset password for <strong>{resetPwUser.name}</strong> ({resetPwUser.email})
+                  </p>
+
+                  {!resetPwResult && (
+                    <>
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: "#555", display: "block", marginBottom: 4 }}>New Password</label>
+                        <input
+                          className="inp"
+                          type="text"
+                          value={resetPwValue}
+                          onChange={(e) => setResetPwValue(e.target.value)}
+                          placeholder="Enter new password or leave blank to auto-generate"
+                          style={{ width: "100%", fontSize: 13 }}
+                        />
+                        <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>
+                          Leave blank to generate a random password. Minimum 6 characters if entering manually.
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <button className="btn" onClick={closeResetPwModal} style={{ padding: "8px 18px", fontSize: 12, background: "#f3f4f6", color: "#555" }}>Cancel</button>
+                        <button className="btn" onClick={resetUserPassword} disabled={resetPwLoading || (resetPwValue.trim() && resetPwValue.trim().length < 6)} style={{ padding: "8px 18px", fontSize: 12, background: resetPwLoading ? "#ccc" : "#1D4ED8", color: "#fff" }}>
+                          {resetPwLoading ? "Resetting..." : (resetPwValue.trim() ? "Set Password" : "Generate & Reset")}
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {resetPwResult && (
+                    <div>
+                      <div style={{ padding: "14px 16px", borderRadius: 10, background: resetPwResult.success ? "#f0fdf4" : "#fef2f2", marginBottom: 14 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: resetPwResult.success ? "#065f46" : "#991b1b", marginBottom: 4 }}>
+                          {resetPwResult.success ? "Password Reset Successful" : "Reset Failed"}
+                        </div>
+                        <div style={{ fontSize: 12, color: resetPwResult.success ? "#047857" : "#b91c1c" }}>
+                          {resetPwResult.message}
+                        </div>
+                      </div>
+                      {resetPwResult.generatedPassword && (
+                        <div style={{ padding: "12px 16px", borderRadius: 10, background: "#eff6ff", border: "1px solid #bfdbfe", marginBottom: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: "#1e40af", marginBottom: 4 }}>Generated Password (share with user securely)</div>
+                          <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "monospace", color: "#1d4ed8", letterSpacing: 1, userSelect: "all" }}>
+                            {resetPwResult.generatedPassword}
+                          </div>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button className="btn" onClick={closeResetPwModal} style={{ padding: "8px 18px", fontSize: 12, background: "#1a1a2e", color: "#e8c547" }}>Close</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
