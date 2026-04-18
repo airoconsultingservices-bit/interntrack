@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import { PrismaClient } from "@prisma/client";
 import { StorageService } from "../services/storage";
+import { parseResume } from "../services/resumeParser";
 import { logger } from "../config/logger";
 
 const router = Router();
@@ -48,9 +49,11 @@ router.post("/upload", upload.single("resume"), async (req: Request, res: Respon
       return res.status(500).json({ error: "File storage failed: " + err.message });
     }
 
-    // 2. Basic skill extraction from filename (placeholder for AI parsing)
-    const extractedSkills = extractSkillsFromName(file.originalname);
-    const extractedIndustries = inferIndustries(extractedSkills);
+    // 2. Parse resume content and extract skills
+    const parsed = await parseResume(file.buffer, file.mimetype, file.originalname);
+    const extractedSkills = parsed.skills;
+    const extractedIndustries = parsed.industries;
+    logger.info(`Parsed ${file.originalname}: ${extractedSkills.length} skills, ${parsed.textLength} chars`);
 
     // 3. Save Resume record in database
     const resume = await prisma.resume.create({
@@ -164,39 +167,5 @@ router.delete("/:id", async (req: Request, res: Response) => {
     return res.status(500).json({ error: err.message });
   }
 });
-
-// ─── Helpers ────────────────────────────────────────────
-
-/** Extract likely skills from the resume filename (basic heuristic). */
-function extractSkillsFromName(filename: string): string[] {
-  const name = filename.toLowerCase().replace(/[_\-\.]/g, " ");
-  const skillKeywords = [
-    "python", "javascript", "typescript", "react", "angular", "vue", "node",
-    "java", "c++", "csharp", "go", "rust", "ruby", "php", "swift", "kotlin",
-    "sql", "nosql", "mongodb", "postgresql", "mysql", "redis",
-    "aws", "azure", "gcp", "docker", "kubernetes", "terraform",
-    "ml", "ai", "data", "analytics", "tableau", "power bi",
-    "sap", "abap", "fiori", "hana", "s4hana",
-    "excel", "vba", "salesforce", "jira",
-  ];
-  const found = skillKeywords.filter((s) => name.includes(s));
-  // If nothing found from filename, return general defaults
-  return found.length > 0 ? found : ["General"];
-}
-
-/** Infer industries from extracted skills. */
-function inferIndustries(skills: string[]): string[] {
-  const industries: string[] = [];
-  const s = skills.join(" ").toLowerCase();
-  if (s.match(/sap|abap|fiori|hana|s4hana|erp/)) industries.push("Enterprise Software");
-  if (s.match(/ml|ai|data|analytics|python|tensorflow/)) industries.push("Technology");
-  if (s.match(/sql|tableau|power bi|excel/)) industries.push("Finance");
-  if (s.match(/react|angular|vue|javascript|typescript|node/)) industries.push("Technology");
-  if (s.match(/aws|azure|gcp|docker|kubernetes/)) industries.push("Cloud Computing");
-  if (s.match(/salesforce/)) industries.push("Consulting");
-  // Deduplicate
-  const unique = [...new Set(industries)];
-  return unique.length > 0 ? unique : ["General"];
-}
 
 export default router;
