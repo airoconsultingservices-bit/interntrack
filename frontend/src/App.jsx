@@ -247,7 +247,8 @@ export default function App() {
   const [gmailLoading, setGmailLoading] = useState(false);
   const [toast, setToast] = useState("");
   const [saved, setSaved] = useState(false);
-  const [users, setUsers] = useState(ADMIN_USERS);
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [userSearch, setUserSearch] = useState("");
   const [ingLog, setIngLog] = useState([]);
   const [ingesting, setIngesting] = useState(false);
@@ -419,6 +420,17 @@ export default function App() {
         setRegistered(true);
         setLoginLoading(false);
         notify("Welcome back, " + data.user.firstName + "!");
+        return;
+      }
+      // API returned an error (suspended, wrong password, etc.)
+      if (resp.status === 403) {
+        setLoginError(data.error || "Your account has been suspended. Please contact support.");
+        setLoginLoading(false);
+        return;
+      }
+      if (resp.status === 401) {
+        setLoginError(data.error || "Invalid email or password");
+        setLoginLoading(false);
         return;
       }
     } catch {
@@ -596,6 +608,84 @@ export default function App() {
       fetchResumes();
     }
   }, [tab, view]);
+
+  /* ─── Admin: Fetch users from database ─── */
+  const fetchAdminUsers = async () => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    setUsersLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setUsers(data);
+      } else {
+        console.warn("Failed to fetch users:", resp.status);
+      }
+    } catch (err) {
+      console.warn("Could not fetch admin users:", err.message);
+      // Fallback to demo data if API unavailable
+      setUsers(ADMIN_USERS);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  /* Admin: Suspend or activate a user */
+  const toggleUserStatus = async (userId, currentStatus) => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    const newActive = currentStatus === "Suspended";
+    try {
+      const resp = await fetch(`${API_BASE}/admin/users/${userId}/status`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: newActive }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, status: newActive ? "Active" : "Suspended", isActive: newActive } : u));
+        notify(data.message);
+      } else {
+        const errData = await resp.json().catch(() => ({}));
+        notify("Error: " + (errData.error || "Failed to update user"));
+      }
+    } catch (err) {
+      notify("Network error: " + err.message);
+    }
+  };
+
+  /* Admin: Remove a user permanently */
+  const removeUser = async (userId, userName) => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    if (!window.confirm(`Permanently remove ${userName}? This cannot be undone.`)) return;
+    try {
+      const resp = await fetch(`${API_BASE}/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        setUsers((prev) => prev.filter((u) => u.id !== userId));
+        const data = await resp.json().catch(() => ({}));
+        notify(data.message || `${userName} removed`);
+      } else {
+        const errData = await resp.json().catch(() => ({}));
+        notify("Error: " + (errData.error || "Failed to remove user"));
+      }
+    } catch (err) {
+      notify("Network error: " + err.message);
+    }
+  };
+
+  /* Load admin users when Users tab is selected */
+  useEffect(() => {
+    if (adminTab === "users" && view === "admin") {
+      fetchAdminUsers();
+    }
+  }, [adminTab, view]);
 
   const runIngestion = (src) => {
     setIngesting(true); setIngLog([]);
@@ -1423,12 +1513,16 @@ export default function App() {
         {view === "admin" && adminTab === "users" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-              <div><h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 2 }}>Users</h1><p style={{ color: "#888", fontSize: 13 }}>Manage students.</p></div>
-              <input className="inp" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} placeholder="Search..." style={{ width: 200, fontSize: 13 }} />
+              <div><h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 2 }}>Users</h1><p style={{ color: "#888", fontSize: 13 }}>Manage students. {users.length > 0 && <span style={{ fontWeight: 600 }}>{users.length} total</span>}</p></div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input className="inp" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} placeholder="Search..." style={{ width: 200, fontSize: 13 }} />
+                <button className="btn" onClick={fetchAdminUsers} style={{ padding: "6px 12px", fontSize: 11, background: "#7C3AED", color: "#fff" }}>Refresh</button>
+              </div>
             </div>
+            {usersLoading && <div style={{ textAlign: "center", color: "#888", padding: 20 }}>Loading users...</div>}
             <div className="card" style={{ padding: 0, overflow: "auto" }}>
-              <table className="tbl"><thead><tr><th>User</th><th>Uni</th><th>Plan</th><th>Apps</th><th>Status</th><th>Actions</th></tr></thead>
-                <tbody>{filteredUsers.map((u) => <tr key={u.id}><td><div style={{ fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: 11, color: "#999" }}>{u.email}</div></td><td>{u.uni}</td><td><PlanBadge plan={u.plan} /></td><td style={{ fontWeight: 600 }}>{u.apps}</td><td><UserStatusBadge status={u.status} /></td><td><div style={{ display: "flex", gap: 4 }}>{u.status === "Suspended" ? <button className="btn" onClick={() => { setUsers((p) => p.map((x) => x.id === u.id ? { ...x, status: "Active" } : x)); notify(u.name + " activated"); }} style={{ padding: "4px 10px", background: "#059669", color: "#fff", fontSize: 11 }}>Activate</button> : <button className="btn" onClick={() => { setUsers((p) => p.map((x) => x.id === u.id ? { ...x, status: "Suspended" } : x)); notify(u.name + " suspended"); }} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#B91C1C", fontSize: 11 }}>Suspend</button>}<button className="btn" onClick={() => { setUsers((p) => p.filter((x) => x.id !== u.id)); notify(u.name + " removed"); }} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#DC2626", fontSize: 11 }}>Remove</button></div></td></tr>)}</tbody></table>
+              <table className="tbl"><thead><tr><th>User</th><th>Uni</th><th>Plan</th><th>Apps</th><th>Joined</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>{filteredUsers.map((u) => <tr key={u.id}><td><div style={{ fontWeight: 600 }}>{u.name}</div><div style={{ fontSize: 11, color: "#999" }}>{u.email}</div>{u.phone && <div style={{ fontSize: 10, color: "#aaa" }}>{u.phone}</div>}</td><td>{u.uni}</td><td><PlanBadge plan={u.plan} /></td><td style={{ fontWeight: 600 }}>{u.apps}</td><td style={{ fontSize: 11, color: "#888" }}>{u.joined ? new Date(u.joined).toLocaleDateString() : "-"}</td><td><UserStatusBadge status={u.status} /></td><td><div style={{ display: "flex", gap: 4 }}>{u.status === "Suspended" ? <button className="btn" onClick={() => toggleUserStatus(u.id, u.status)} style={{ padding: "4px 10px", background: "#059669", color: "#fff", fontSize: 11 }}>Activate</button> : <button className="btn" onClick={() => toggleUserStatus(u.id, u.status)} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#B91C1C", fontSize: 11 }}>Suspend</button>}<button className="btn" onClick={() => removeUser(u.id, u.name)} style={{ padding: "4px 10px", background: "#FEF2F2", color: "#DC2626", fontSize: 11 }}>Remove</button></div></td></tr>)}</tbody></table>
             </div>
           </div>
         )}
