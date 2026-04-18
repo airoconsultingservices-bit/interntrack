@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 /* ═══ DATA ═══ */
 const COMPANIES = [
@@ -234,6 +234,9 @@ export default function App() {
   const [profile, setProfile] = useState({ name: "", email: "", phone: "", university: "", major: "", gpa: "", gradYear: "2027", skills: "", industries: "", linkedin: "", bio: "" });
   const [resumeFile, setResumeFile] = useState(null);
   const [parsed, setParsed] = useState(false);
+  const [savedResumes, setSavedResumes] = useState([]);
+  const [resumeLoading, setResumeLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const [apps, setApps] = useState(INIT_APPS);
@@ -508,6 +511,7 @@ export default function App() {
             industries: p.industries || (data.extractedIndustries || []).join(", "),
           }));
           notify("Resume uploaded & parsed!");
+          fetchResumes();
           return;
         }
         const errData = await resp.json().catch(() => ({}));
@@ -524,6 +528,74 @@ export default function App() {
       notify("Resume parsed! (demo mode)");
     }, 1400);
   };
+
+  /* Fetch previously uploaded resumes from backend */
+  const fetchResumes = async () => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    setResumeLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/resumes`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setSavedResumes(data);
+        // If user has resumes, show the latest one's extracted info
+        if (data.length > 0) {
+          const latest = data[0];
+          setParsed(true);
+          setProfile((p) => ({
+            ...p,
+            skills: p.skills || (latest.extractedSkills || []).join(", "),
+            industries: p.industries || (latest.extractedIndustries || []).join(", "),
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch resumes:", err.message);
+    } finally {
+      setResumeLoading(false);
+    }
+  };
+
+  /* Delete a resume */
+  const deleteResume = async (resumeId) => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    if (!window.confirm("Delete this resume? This cannot be undone.")) return;
+    setDeletingId(resumeId);
+    try {
+      const resp = await fetch(`${API_BASE}/resumes/${resumeId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        setSavedResumes((prev) => prev.filter((r) => r.id !== resumeId));
+        // If no resumes left, reset upload UI
+        const remaining = savedResumes.filter((r) => r.id !== resumeId);
+        if (remaining.length === 0) {
+          setResumeFile(null);
+          setParsed(false);
+        }
+        notify("Resume deleted");
+      } else {
+        const errData = await resp.json().catch(() => ({}));
+        notify("Delete failed: " + (errData.error || "Unknown error"));
+      }
+    } catch (err) {
+      notify("Delete failed: " + err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  /* Load resumes when Resume tab is selected */
+  useEffect(() => {
+    if (tab === "resume" && view === "student") {
+      fetchResumes();
+    }
+  }, [tab, view]);
 
   const runIngestion = (src) => {
     setIngesting(true); setIngLog([]);
@@ -1200,12 +1272,51 @@ export default function App() {
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>Resume Upload</h1>
             <p style={{ color: "#888", fontSize: 13, marginBottom: 20 }}>Upload for auto skill extraction.</p>
+
+            {/* Previously uploaded resumes */}
+            {resumeLoading && <div style={{ textAlign: "center", color: "#888", padding: 20, fontSize: 13 }}>Loading your resumes...</div>}
+            {savedResumes.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: "#1a1a2e" }}>Your Resumes</div>
+                {savedResumes.map((r) => (
+                  <div key={r.id} className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#15803d" }}>
+                        {r.mimeType === "application/pdf" ? "P" : "W"}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: "#1a1a2e" }}>{r.fileName}</div>
+                        <div style={{ color: "#888", fontSize: 11, marginTop: 2 }}>
+                          {(r.fileSize / 1024).toFixed(1)} KB &middot; {new Date(r.createdAt).toLocaleDateString()} &middot;
+                          <span style={{ color: r.parseStatus === "COMPLETED" ? "#059669" : "#d97706", fontWeight: 600 }}> {r.parseStatus === "COMPLETED" ? "Parsed" : r.parseStatus}</span>
+                        </div>
+                        {r.extractedSkills && r.extractedSkills.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>
+                            {r.extractedSkills.slice(0, 6).map((s, i) => <span key={i} className="chip" style={{ fontSize: 10, padding: "1px 6px" }}>{s}</span>)}
+                            {r.extractedSkills.length > 6 && <span style={{ fontSize: 10, color: "#888" }}>+{r.extractedSkills.length - 6} more</span>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteResume(r.id); }}
+                      disabled={deletingId === r.id}
+                      style={{ background: "none", border: "1px solid #fca5a5", color: "#dc2626", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: deletingId === r.id ? "not-allowed" : "pointer", opacity: deletingId === r.id ? 0.5 : 1 }}
+                    >
+                      {deletingId === r.id ? "Deleting..." : "Delete"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Upload area */}
             <div className="card" onClick={() => fileRef.current && fileRef.current.click()} style={{ textAlign: "center", padding: 40, cursor: "pointer", border: resumeFile ? "2px solid #86EFAC" : "2px dashed #d4d0c8", background: resumeFile ? "#f0fdf4" : "#fff" }}>
               <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" onChange={onResume} style={{ display: "none" }} />
               <div style={{ fontSize: 36, marginBottom: 8 }}>{resumeFile ? "+" : "^"}</div>
               {resumeFile
                 ? <div><div style={{ fontWeight: 700, color: "#15803d" }}>{resumeFile.name}</div><div style={{ color: "#888", fontSize: 12, marginTop: 3 }}>{(resumeFile.size / 1024).toFixed(1)} KB</div></div>
-                : <div><div style={{ fontWeight: 700 }}>Click to upload resume</div><div style={{ color: "#888", fontSize: 12, marginTop: 3 }}>PDF, DOC, DOCX</div></div>
+                : <div><div style={{ fontWeight: 700 }}>{savedResumes.length > 0 ? "Upload another resume" : "Click to upload resume"}</div><div style={{ color: "#888", fontSize: 12, marginTop: 3 }}>PDF, DOC, DOCX (max 5 MB)</div></div>
               }
             </div>
             {parsed && (
