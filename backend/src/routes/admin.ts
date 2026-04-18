@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "../config/logger";
+import { generateJobs } from "../services/jobGenerator";
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -184,6 +185,102 @@ router.delete("/users/:id", async (req: Request, res: Response) => {
     return res.json({ message: `User ${user.firstName} ${user.lastName} has been removed` });
   } catch (err: any) {
     logger.error("Admin user delete error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/ingest-jobs
+ * Generate AI-powered internship listings and store in database.
+ * Body: { count?: number } (default 500)
+ */
+router.post("/ingest-jobs", async (req: Request, res: Response) => {
+  try {
+    const count = Math.min(req.body.count || 500, 1000);
+    const adminId = (req as any).user?.id;
+
+    logger.info(`AI job ingestion started by admin ${adminId}: ${count} jobs requested`);
+
+    // Generate job listings
+    const jobs = generateJobs(count);
+
+    // Batch insert: first create/find companies, then create internships
+    let companiesCreated = 0;
+    let internshipsCreated = 0;
+    const companyCache: Record<string, string> = {}; // name -> id
+
+    for (const job of jobs) {
+      // Find or create company
+      let companyId = companyCache[job.companyName];
+      if (!companyId) {
+        let company = await prisma.company.findFirst({ where: { name: job.companyName } });
+        if (!company) {
+          company = await prisma.company.create({
+            data: {
+              name: job.companyName,
+              logo: job.companyLogo,
+              industry: job.companyIndustry,
+              website: job.companyWebsite,
+              careersUrl: job.applicationUrl,
+              isVerified: true,
+              isActive: true,
+            },
+          });
+          companiesCreated++;
+        }
+        companyId = company.id;
+        companyCache[job.companyName] = companyId;
+      }
+
+      // Create internship
+      await prisma.internship.create({
+        data: {
+          companyId,
+          title: job.title,
+          description: job.description,
+          location: job.location,
+          isRemote: job.isRemote,
+          skills: job.skills,
+          requirements: job.requirements,
+          applicationUrl: job.applicationUrl,
+          portalType: "DIRECT",
+          compensation: job.compensation,
+          source: "AI Generated",
+          isActive: true,
+          deadline: job.deadline === "Rolling" ? null : new Date(`${job.deadline} 2026`),
+        },
+      });
+      internshipsCreated++;
+    }
+
+    logger.info(`AI job ingestion complete: ${internshipsCreated} internships, ${companiesCreated} new companies`);
+
+    return res.status(201).json({
+      message: `Successfully ingested ${internshipsCreated} internship listings`,
+      stats: {
+        internshipsCreated,
+        companiesCreated,
+        categories: [...new Set(jobs.map((j) => j.category))],
+      },
+    });
+  } catch (err: any) {
+    logger.error("AI job ingestion error:", err);
+    return res.status(500).json({ error: err.message || "Job ingestion failed" });
+  }
+});
+
+/**
+ * GET /api/admin/ingest-stats
+ * Get current ingestion stats.
+ */
+router.get("/ingest-stats", async (_req: Request, res: Response) => {
+  try {
+    const totalInternships = await prisma.internship.count();
+    const totalCompanies = await prisma.company.count();
+    const activeInternships = await prisma.internship.count({ where: { isActive: true } });
+
+    return res.json({ totalInternships, totalCompanies, activeInternships });
+  } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 });

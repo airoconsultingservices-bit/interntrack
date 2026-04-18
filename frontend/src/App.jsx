@@ -256,6 +256,12 @@ export default function App() {
   const [resetPwLoading, setResetPwLoading] = useState(false);
   const [ingLog, setIngLog] = useState([]);
   const [ingesting, setIngesting] = useState(false);
+  const [aiIngesting, setAiIngesting] = useState(false);
+  const [internships, setInternships] = useState([]);
+  const [internCategories, setInternCategories] = useState([]);
+  const [internLoading, setInternLoading] = useState(false);
+  const [internPage, setInternPage] = useState(1);
+  const [internTotal, setInternTotal] = useState(0);
   const fileRef = useRef(null);
 
   const notify = (m) => { setToast(m); setTimeout(() => setToast(""), 2800); };
@@ -748,6 +754,74 @@ export default function App() {
       }, s.delay);
     });
   };
+
+  /* ─── AI Job Ingestion ─── */
+  const runAiIngestion = async () => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    setAiIngesting(true);
+    setIngLog([]);
+    const addLog = (msg, ok = false) => setIngLog((prev) => [...prev, { time: new Date().toLocaleTimeString(), msg, ok }]);
+
+    addLog("Initializing AI Job Generator...");
+    setTimeout(() => addLog("Generating 500 STEM internship listings across 11 categories..."), 800);
+    setTimeout(() => addLog("Categories: SAP, IT, STEM, Sales, Marketing, Supply Chain, PM, PgM, PdM, Data Analytics, Business Analysis"), 1500);
+
+    try {
+      const resp = await fetch(`${API_BASE}/admin/ingest-jobs`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 500 }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        addLog(`Created ${data.stats.companiesCreated} new companies`);
+        addLog(`Ingested ${data.stats.internshipsCreated} internship listings`, true);
+        notify(data.message);
+      } else {
+        addLog("Error: " + (data.error || "Ingestion failed"));
+        notify("Ingestion failed: " + (data.error || "Unknown error"));
+      }
+    } catch (err) {
+      addLog("Network error: " + err.message);
+      notify("Network error during ingestion");
+    } finally {
+      setAiIngesting(false);
+    }
+  };
+
+  /* ─── Fetch Internships from database ─── */
+  const fetchInternships = async (page = 1, searchQuery = "", categoryFilter = "") => {
+    const token = localStorage.getItem("interntrack_token");
+    if (!token) return;
+    setInternLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "50" });
+      if (searchQuery) params.set("search", searchQuery);
+      if (categoryFilter && categoryFilter !== "All") params.set("category", categoryFilter);
+      const resp = await fetch(`${API_BASE}/internships?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setInternships(data.internships);
+        setInternCategories(data.categories || []);
+        setInternTotal(data.pagination.total);
+        setInternPage(data.pagination.page);
+      }
+    } catch (err) {
+      console.warn("Could not fetch internships:", err.message);
+    } finally {
+      setInternLoading(false);
+    }
+  };
+
+  /* Load internships when Discover tab is selected */
+  useEffect(() => {
+    if (tab === "discover" && view === "student") {
+      fetchInternships(1, search, filter);
+    }
+  }, [tab, view]);
 
   const filtered = COMPANIES.filter((c) => {
     const q = search.toLowerCase();
@@ -1472,28 +1546,77 @@ export default function App() {
         {view === "student" && tab === "discover" && (
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>Discover Internships</h1>
-            <p style={{ color: "#888", fontSize: 13, marginBottom: 20 }}>One-click apply.</p>
+            <p style={{ color: "#888", fontSize: 13, marginBottom: 6 }}>
+              {internships.length > 0
+                ? `${internTotal} internship${internTotal !== 1 ? "s" : ""} across ${internCategories.length} categories. One-click apply.`
+                : "One-click apply."}
+            </p>
             <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
-              <input className="inp" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." style={{ flex: 1, minWidth: 180 }} />
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{industries.map((ind) => <button key={ind} className="btn" onClick={() => setFilter(ind)} style={{ padding: "7px 12px", fontSize: 11, background: filter === ind ? "#1a1a2e" : "#fff", color: filter === ind ? "#e8c547" : "#888", border: filter === ind ? "none" : "1px solid #e5e3dc" }}>{ind}</button>)}</div>
+              <input className="inp" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies, roles, skills..." style={{ flex: 1, minWidth: 180 }}
+                onKeyDown={(e) => { if (e.key === "Enter") fetchInternships(1, search, filter); }} />
+              <button className="btn" onClick={() => fetchInternships(1, search, filter)} style={{ padding: "7px 14px", fontSize: 12, background: "#1a1a2e", color: "#e8c547" }}>Search</button>
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
-              {filtered.map((c) => (
-                <div key={c.id} className="card" style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 11, background: c.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{c.logo}</div>
-                  <div style={{ flex: 1, minWidth: 160 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontWeight: 700, fontSize: 14 }}>{c.name}</span><span style={{ padding: "2px 7px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: c.match >= 90 ? "#dcfce7" : "#fef9c3", color: c.match >= 90 ? "#15803d" : "#a16207" }}>{c.match}%</span></div>
-                    <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{c.industry} | {c.location} | {c.deadline}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>{c.roles.map((r, i) => <span key={i} className="chip">{r}</span>)}</div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0, minWidth: 110 }}>
-                    {applied.has(c.id) ? <div style={{ padding: "8px 14px", borderRadius: 9, background: "#ecfdf5", color: "#065f46", fontWeight: 700, fontSize: 12, textAlign: "center" }}>Applied</div>
-                      : applyingId === c.id ? <div className="anim-pulse" style={{ padding: "8px 14px", borderRadius: 9, background: "#fefce8", color: "#a16207", fontWeight: 600, fontSize: 12, textAlign: "center" }}>Applying...</div>
-                        : <div><button className="btn" onClick={() => doApply(c, "Direct")} style={{ padding: "8px 14px", background: "#1a1a2e", color: "#e8c547", fontSize: 12, width: "100%", marginBottom: 5 }}>Apply Direct</button><button className="btn" onClick={() => doApply(c, "LinkedIn")} style={{ padding: "8px 14px", background: "#0a66c2", color: "#fff", fontSize: 12, width: "100%" }}>LinkedIn</button></div>}
-                  </div>
-                </div>
+            {/* Category filters */}
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 14 }}>
+              {(internCategories.length > 0 ? ["All", ...internCategories] : industries).map((ind) => (
+                <button key={ind} className="btn" onClick={() => { setFilter(ind); fetchInternships(1, search, ind); }} style={{ padding: "6px 12px", fontSize: 11, background: filter === ind ? "#1a1a2e" : "#fff", color: filter === ind ? "#e8c547" : "#888", border: filter === ind ? "none" : "1px solid #e5e3dc" }}>{ind}</button>
               ))}
             </div>
+
+            {internLoading && <div style={{ textAlign: "center", color: "#888", padding: 20 }}>Loading internships...</div>}
+
+            {/* Real internships from database */}
+            {internships.length > 0 ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                {internships.map((intern) => (
+                  <div key={intern.id} className="card" style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 11, background: "#7C3AED", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: intern.company.logo?.length > 2 ? 9 : 14, flexShrink: 0 }}>{intern.company.logo || intern.company.name[0]}</div>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{intern.title}</div>
+                      <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>{intern.company.name}</div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{intern.company.industry} | {intern.location}{intern.compensation ? ` | ${intern.compensation}` : ""}{intern.deadline ? ` | Due ${new Date(intern.deadline).toLocaleDateString()}` : ""}</div>
+                      {intern.description && <div style={{ fontSize: 12, color: "#666", marginTop: 4, lineHeight: 1.4 }}>{intern.description.length > 120 ? intern.description.slice(0, 120) + "..." : intern.description}</div>}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>{(intern.skills || []).slice(0, 5).map((s, i) => <span key={i} className="chip">{s}</span>)}</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0, minWidth: 110 }}>
+                      {intern.applicationUrl
+                        ? <a href={intern.applicationUrl} target="_blank" rel="noopener noreferrer" className="btn" style={{ padding: "8px 14px", background: "#1a1a2e", color: "#e8c547", fontSize: 12, width: "100%", textAlign: "center", textDecoration: "none", display: "block" }}>Apply Now</a>
+                        : <button className="btn" style={{ padding: "8px 14px", background: "#ccc", color: "#666", fontSize: 12, width: "100%" }} disabled>No Link</button>}
+                    </div>
+                  </div>
+                ))}
+                {/* Pagination */}
+                {internTotal > 50 && (
+                  <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 10 }}>
+                    <button className="btn" disabled={internPage <= 1} onClick={() => fetchInternships(internPage - 1, search, filter)} style={{ padding: "8px 16px", fontSize: 12, background: internPage <= 1 ? "#eee" : "#1a1a2e", color: internPage <= 1 ? "#999" : "#e8c547" }}>Previous</button>
+                    <span style={{ padding: "8px 12px", fontSize: 12, color: "#888" }}>Page {internPage} of {Math.ceil(internTotal / 50)}</span>
+                    <button className="btn" disabled={internPage >= Math.ceil(internTotal / 50)} onClick={() => fetchInternships(internPage + 1, search, filter)} style={{ padding: "8px 16px", fontSize: 12, background: internPage >= Math.ceil(internTotal / 50) ? "#eee" : "#1a1a2e", color: internPage >= Math.ceil(internTotal / 50) ? "#999" : "#e8c547" }}>Next</button>
+                  </div>
+                )}
+              </div>
+            ) : !internLoading ? (
+              /* Fallback to hardcoded demo data if no DB internships */
+              <div style={{ display: "grid", gap: 10 }}>
+                {filtered.map((c) => (
+                  <div key={c.id} className="card" style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 11, background: c.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>{c.logo}</div>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontWeight: 700, fontSize: 14 }}>{c.name}</span><span style={{ padding: "2px 7px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: c.match >= 90 ? "#dcfce7" : "#fef9c3", color: c.match >= 90 ? "#15803d" : "#a16207" }}>{c.match}%</span></div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{c.industry} | {c.location} | {c.deadline}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>{c.roles.map((r, i) => <span key={i} className="chip">{r}</span>)}</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, flexShrink: 0, minWidth: 110 }}>
+                      {applied.has(c.id) ? <div style={{ padding: "8px 14px", borderRadius: 9, background: "#ecfdf5", color: "#065f46", fontWeight: 700, fontSize: 12, textAlign: "center" }}>Applied</div>
+                        : applyingId === c.id ? <div className="anim-pulse" style={{ padding: "8px 14px", borderRadius: 9, background: "#fefce8", color: "#a16207", fontWeight: 600, fontSize: 12, textAlign: "center" }}>Applying...</div>
+                          : <div><button className="btn" onClick={() => doApply(c, "Direct")} style={{ padding: "8px 14px", background: "#1a1a2e", color: "#e8c547", fontSize: 12, width: "100%", marginBottom: 5 }}>Apply Direct</button><button className="btn" onClick={() => doApply(c, "LinkedIn")} style={{ padding: "8px 14px", background: "#0a66c2", color: "#fff", fontSize: 12, width: "100%" }}>LinkedIn</button></div>}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>
+                  Showing demo data. Admin can generate real listings via Data Ingestion &gt; Get Job List Using AI.
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -1649,7 +1772,19 @@ export default function App() {
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 2 }}>Data Ingestion</h1>
             <p style={{ color: "#888", fontSize: 13, marginBottom: 18 }}>Import from external sources.</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+              {/* AI Job Ingestion - Primary */}
+              <div className="card" style={{ textAlign: "center", padding: 22, gridColumn: "1/-1", background: "linear-gradient(135deg, #1a1a2e 0%, #2d1b69 100%)", border: "2px solid #7C3AED" }}>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>AI</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: "#e8c547", marginBottom: 4 }}>Get Job List Using AI</div>
+                <div style={{ fontSize: 12, color: "#a78bfa", marginBottom: 14 }}>
+                  Generate 500 STEM internship listings across SAP, IT, STEM, Sales, Marketing, Supply Chain, Project/Program/Product Management, Data Analytics, Business Analysis
+                </div>
+                <button className="btn" disabled={aiIngesting} onClick={runAiIngestion} style={{ padding: "12px 32px", background: aiIngesting ? "#555" : "#7C3AED", color: "#fff", fontSize: 13, fontWeight: 700 }}>
+                  {aiIngesting ? "Generating..." : "Generate 500 Internships"}
+                </button>
+              </div>
+              {/* Legacy sources */}
               {[{ src: "LinkedIn API", color: "#0A66C2" }, { src: "Handshake", color: "#E8C547" }, { src: "CSV Upload", color: "#059669" }].map((s) => (
                 <div key={s.src} className="card" style={{ textAlign: "center", padding: 22 }}>
                   <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>{s.src}</div>
